@@ -1,2 +1,3 @@
 # VirtualMe-Ai
 Based WeChat and QQ, We setup a Role to learn more about a Chat-style......
+Cased by the api,plan failed..Noooo!!
