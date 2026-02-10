@@ -13,6 +13,7 @@ async def record_message(event: GroupMessageEvent):
     group_id = event.group_id
     raw_time = event.time
 
+
     # 2. 提取内容和昵称
     content = event.get_plaintext()
     nickname = event.sender.card or event.sender.nickname
