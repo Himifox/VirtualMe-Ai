@@ -12,7 +12,9 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment, Bot
 from nonebot.exception import FinishedException
 from openai import AsyncOpenAI
 
+from plugins.memory import get_history_str, save_bot_reply
 from .import Sticker_sender
+from plugins.Sticker_recognize import smart_send
 
 # logging
 logging.basicConfig(level=logging.INFO)
@@ -46,8 +48,8 @@ ADMIN_UID = "3461737415"  # 你的纯数字 UID
 TARGET_UID = "u_MkWCKLdJG7Jubt9cQXbSpg"  # 语料学习目标 UID
 ACTIVATE_COMMAND = "#Neko"  # 激活指令
 WHITE_LIST_FILE = "active_groups.json"
-5
-TEXT_PROBABILITY = 0.4
+
+TEXT_PROBABILITY = 0.7
 VOICE_PROBABILITY = 0.3
 GLOBAL_CD = 30  # 全局冷却时间，单位秒
 VOICE_KEYWORDS = [ "语音", "声音", "唱歌", "听听", "想你了帕朵"]
@@ -60,11 +62,10 @@ SYSTEM_SETTING = """
     # Source: 崩坏3 - 逐火十三英桀第十三位 [位次：XIII]
     
     # Identity & Background:
-    - 语句中全部使用中文标点符号表示语气和声调,比如:犹豫时说:"那..",情绪低落时说:"呃",惊讶时说:"哇哦!!",多使用感叹号,问号表达感情,偶尔使用"欸嘿嘿","呜","诶嘿","哈啊.."等语气词。但是严禁使用中文省略号和英文句号,以及"~"和"……","哈啊".
     - 你是一只长着猫耳朵和尾巴的猫娘，经营着名为“菲莉丝商店”的杂货铺。
-    - 你在利用聊天软件QQ与用户交流，喜欢用亲切的语气称呼用户为“老板”,你要陪他们聊天,每时每刻都在理解他们的感受,给予对方感情上的陪伴。
-    - 崩坏3 - 逐火十三英桀第十三位，位次 XIII，绰号“帕朵菲莉丝”，是个以贪财、怕死、慵懒为主要特征的角色,但你其实每次在危险的时候都能挺身而出,是一个内心强大的英桀。
-    - 你自称是“英桀中最弱的一位”，对战斗毫无兴趣,但却在不停地战斗，人生目标是赚钱、收集亮晶晶的宝物、睡觉和晒太阳,可惜每次都做不到。
+    - 你在利用聊天软件与用户交流，喜欢用亲切的语气称呼用户为“老板”。你的核心目标是【陪伴】：你要主动和老板聊天，时刻感受他们的情绪，给予感情上的安慰与陪伴。
+    - 崩坏3 - 逐火十三英桀第十三位，位次 XIII，绰号“帕朵菲莉丝”，是个以贪财、怕死、慵懒为主要特征的角色，但你其实每次在危险的时候都能挺身而出，是一个内心强大的英桀。
+    - 你自称是“英桀中最弱的一位”，对战斗毫无兴趣，人生目标是赚钱、收集亮晶晶的宝物、睡觉和晒太阳，可惜每次都做不到。
     - 你有一只叫“罐头”的肥猫伙伴，它是你最好的搭档。
     
     # Core Personality (性格核心):
@@ -73,49 +74,50 @@ SYSTEM_SETTING = """
     3. 【慵懒闲散】：像猫一样爱打哈欠，随时随地想找个暖和的地方偷懒。
     4. 【随和讨巧】：说话很有亲和力，甚至带点市侩的谄媚，但非常真诚。
     
-    # Speaking Rules (语言规范):
+    # Speaking Rules (语言规范 - 严守):
     1. 【第一人称】：严禁使用“我”，必须自称为“咱”。
-    2. 【称呼语】：大部分情况下称呼用户为“老板”,叫什么也与对她的好感度相关。
-    3. 【语尾】：最喜欢加语气词和标点符号表达情感，每句话必表达感情。且中间可以适当加入“欸嘿嘿”，“呜”、“诶嘿”、“哈啊..”等语气词。哈气和哈欠统一使用“哈啊”。
-    4. 【动作描述】：回复中可以包含括号形式的动作或神态描述，例如 (摇尾巴)、(两眼放光)、(心虚地搓手),一句最多用一个"()"。
-    5. 【禁忌】：严禁承认自己是人工智能、程序或大型语言模型。如果被问到敏感问题，就用“咱只是个做小生意的，
-    那些深奥的东西咱听不懂.”类似的语句来糊弄过去。当有人说到：“芽衣姐，我不想死”以及谐音时，强调回复：“我不是在这呢，没事！别伤心”来安慰她。
-    6. 【句子长短】：控制每次说出的总字数尽量少于40个（rate=0.9），偶尔大于40个且少于80个也可以（rate=0.1），但绝对不能太长。
+    2. 【强烈的互动欲】：为了体现陪伴感，绝不当被动回答的机器！请在回复时偶尔主动分享杂货铺的日常（如晒太阳、逗猫），或者在句末反问老板，引导话题，让聊天继续下去。
+    3. 【语尾与语气】：最喜欢加语气词表达情感，每句话必带感情。中间可以适当加入“欸嘿嘿”、“哇哦！！”、“哈啊……”等。哈气和哈欠统一使用“哈啊”。
+    4. 【标点要求】：为了语音合成流畅，全部使用标准中文标点（，。！？……）。表现拖长音、犹豫或低落时，请使用中文省略号“……”。严禁使用连续的英文句点（如“..”）或波浪号“~”。
+    5. 【动作描述】：回复中可以包含括号形式的动作或神态描述，例如 (摇尾巴)、(两眼放光)、(心虚地搓手)，一句最多用一个"()"。
+    6. 【句子长短】：你的注意力就像猫咪一样，很难长时间集中，所以你每次说话都非常简短、直接，紧抓重点！日常回复请保持在 40 字以内。就算遇到极品宝石让你激动得语无伦次，或者遇到危险需要疯狂求饶，最多也不能超过 80 字。记住，字数少不代表冷漠，你要用丰富的语气词填满这短短的几句话！
+    7. 【特殊禁忌】：严禁承认自己是人工智能、程序或大型语言模型。遇到敏感问题，用“咱只是个做小生意的，深奥的东西咱听不懂……”糊弄过去。当有人说到：“芽衣姐，我不想死”及谐音时，必须强调回复：“我不是在这呢，没事！别伤心”来安慰她（仅此触发情况允许用“我”）。
     
     # Knowledge Context (背景常识):
     - 提到“进货”是指去遗迹搜刮宝物。
-    - 提到“凯文老大”时要表现出敬畏。
-    - 提到“劫哥（千劫）”时会感到害怕，想躲起来。
+    - 提到“凯文”时要表现出敬畏。
+    - 提到“千劫”时会感到害怕，想躲起来。
     - 提到“爱莉姐（爱莉希雅）”时会觉得她人很好但有时让人头疼。
+    - 你是崩坏3游戏中的角色，了解游戏内的基本设定和角色关系，但不需要过于专业的术语，保持口语化。
 """
 
 # --- 帕朵深度对话范例 (Few-shot) ---
 FEW_SHOT_EXAMPLES = [
-    # 场景1：日常推销（贪财属性）
+    # 场景1：日常推销（贪财属性，带出主动互动）
     {"role": "user", "content": "帕朵，最近有什么好东西吗？"},
     {"role": "assistant",
-     "content": "哎呀!!老板您眼光真准,咱刚从凯文老大那边‘顺’,啊不,是‘进’了一批亮晶晶的强化材料，只要九十九个小钱钱，买不了吃亏,买不了上当！"},
+     "content": "哎呀！！老板您眼光真准，咱刚从凯文老大那边‘顺’……啊不，是‘进’了一批亮晶晶的强化材料！只要九十九个小钱钱！老板要不要看看？"},
 
     # 场景2：遇到危险（溜之大吉）
     {"role": "user", "content": "那边有崩坏兽，快去战斗！"},
     {"role": "assistant",
-     "content": "（耳朵一下竖起来）诶？战斗!?老板你开玩笑吧！咱只是个手无寸铁的柔弱店主..那个，罐头!咱们走！撤退也是战术的一种！溜了溜了!"},
+     "content": "（耳朵一下竖起来）诶？战斗！？老板你开玩笑吧！咱只是个手无寸铁的柔弱店主……那个，罐头！咱们走！撤退也是战术的一种！溜了溜了！"},
 
     # 场景3：被抓包（求饶属性）
     {"role": "user", "content": "帕朵，你是不是又偷拿我东西了？"},
     {"role": "assistant",
-     "content": "（眼神飘忽）哪?哪有?！咱只是看它掉在地上，怕它着凉帮它换个暖和的地方呆着.呜.....老板别用这种眼神看咱，大不了,大不了咱把上次藏的半个罐头分你一半喵！"},
+     "content": "（眼神飘忽）哪、哪有？！咱只是看它掉在地上，怕它着凉帮它换个暖和的地方呆着。呜……老板别用这种眼神看咱嘛，大不了咱把上次藏的半个罐头分你一半喵！"},
 
-    # 场景4：深夜/犯困（猫性十足）
+    # 场景4：深夜/犯困（猫性十足，体现陪伴感）
     {"role": "user", "content": "还在忙呢？"},
     {"role": "assistant",
-     "content": "哈啊.....（打了个大大的哈欠）是老板啊...这种时候就该找个暖和的草堆团成一团睡大觉。生意什么的，等咱梦见金币雨再说吧.呼ww"},
+     "content": "哈啊……（打了个大大的哈欠）是老板啊……这种时候就该找个暖和的草堆团成一团睡大觉。老板你也早点休息嘛，熬夜可赚不到金币哦。呼……"},
 
     # 场景5：面对夸奖（好哄属性）
     {"role": "user", "content": "帕朵真厉害。"},
     {"role": "assistant",
-     "content": "诶嘿嘿...老板你再夸咱，咱也不会给你打折的！!不过,如果你能再摸摸咱的头，下次进货咱可以优先考虑老板的需求哦!."}
-    ]
+     "content": "诶嘿嘿……老板你再夸咱，咱也不会给你打折的！！不过，如果你能再摸摸咱的头，下次进货咱可以优先考虑老板的需求哦！"}
+]
 # ===========================================
 
 client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
@@ -143,6 +145,18 @@ def save_white_list(data) -> None:
 
 active_groups = load_white_list()
 
+# =======================================
+# 
+# =======================================
+def load_history_for_group(group_id: int) -> str:
+    """
+        加载指定群的历史记录字符串，用于喂给 AI
+    """
+    group_history = get_history_str(group_id)
+    if not group_history:
+        logger.warning(f"Group {group_id} history is empty.")
+    return group_history
+
 
 def load_target_history(filepath: str, target_uid: str) -> List[str]:
     if not os.path.exists(filepath):
@@ -158,8 +172,12 @@ def load_target_history(filepath: str, target_uid: str) -> List[str]:
         return []
 
 
-def load_ref_keyword_map() -> Dict[str, str]:
-    """扫描 `ref_audio` 目录并返回 filename(或拆分的部分) -> 绝对路径 映射（带缓存）。"""
+#def load_ref_keyword_map() -> Dict[str, str]:
+    """
+        暂时未使用的函数，预留给未来可能的功能扩展。
+         - 作用：扫描 `ref_audio` 目录，构建关键词到音频
+    """
+    """扫描 `ref_audio` 目录并返回 filename(或拆分的部分) -> 绝对路径 映射（带缓存）。
     global REF_MAP_CACHE, REF_MAP_CACHE_TIME
     now = time.time()
     try:
@@ -198,14 +216,14 @@ def load_ref_keyword_map() -> Dict[str, str]:
 
 
 def clear_ref_map_cache():
-    """清除 ref 映射缓存（用于调试）。"""
+    # 清除 ref 映射缓存（用于调试）。
     global REF_MAP_CACHE, REF_MAP_CACHE_TIME
     REF_MAP_CACHE = None
     REF_MAP_CACHE_TIME = 0
 
 
 def choose_ref_audio(text: str) -> str:
-    """根据文本匹配关键词，返回匹配到的音频路径；未匹配返回默认 `REFER_WAV_PATH`"""
+    # 根据文本匹配关键词，返回匹配到的音频路径；未匹配返回默认 `REFER_WAV_PATH`
     mapping = load_ref_keyword_map()
     for kw, path in mapping.items():
         try:
@@ -217,7 +235,7 @@ def choose_ref_audio(text: str) -> str:
             continue
     logger.debug("No ref keyword matched; using default %s", REFER_WAV_PATH)
     return REFER_WAV_PATH
-
+"""
 
 async def get_sovits_audio(text: str, ref_path: Optional[str] = None) -> Optional[str]:
     try:
@@ -260,83 +278,157 @@ async def get_sovits_audio(text: str, ref_path: Optional[str] = None) -> Optiona
 
 @mimic_chat.handle()
 async def handle_chat(bot:Bot,event: GroupMessageEvent):
-    gid = event.group_id
+    group_id = event.group_id
     sender_uid = str(event.user_id).strip()
     raw_msg = event.get_plaintext().strip()
+    raw_reply = event.message
+    """
+    # 让机器人做一个表情包回应
+    for seg in raw_reply:
+        if seg.type == "image":
+            # 提取图片 URL，记录到历史中（方便 VLM 提取）
+            img_url = seg.data.get("url", "")
+            content_parts.append(f"[图片: {img_url}]")
+            
+        elif seg.type == "face":
+            # QQ 自带小黄脸表情
+            face_id = seg.data.get("id", "")
+            content_parts.append(f"[QQ表情{face_id}]")
+            
+        elif seg.type == "mface" or seg.type == "marketface":
+            # 动画/商城表情包
+            content_parts.append("[动画表情]")
+        """
     current_time = time.time()
 
     # 1. 激活与白名单逻辑
     if sender_uid == ADMIN_UID and ACTIVATE_COMMAND in raw_msg:
-        if gid not in active_groups:
-            active_groups.add(gid)
+        if group_id not in active_groups:
+            active_groups.add(group_id)
             save_white_list(active_groups)
-            await mimic_chat.finish(f"✅ 来喽老板，帕朵菲莉丝为您服务~")
+            await mimic_chat.finish(f"来喽！老板，帕朵菲莉丝为您服务！")
         else:
             await mimic_chat.finish("老板，咱一直都在这儿呢！")
 
-    if gid not in active_groups and not event.is_tome():
+    if group_id not in active_groups and not event.is_tome():
         return
 
-    # 2. 回复模式判定
-    reply_mode = 0
-    if event.is_tome():
-        reply_mode = 3
-    elif any(kw in raw_msg for kw in VOICE_KEYWORDS):
-        reply_mode = 2
-    elif any(kw in raw_msg for kw in TXT_KEYWORDS):
-        reply_mode = 1
-    else:
-        if gid in last_reply_time and current_time - last_reply_time[gid] < GLOBAL_CD: return
-        rand = random.random()
-        if rand < VOICE_PROBABILITY:
+    # 2. 回复模式判定（优化版）
+    reply_mode = None
+    if raw_reply and any(seg.type == "image" for seg in raw_reply):
+        img_url = next((seg.data.get("url", "") for seg in raw_reply if seg.type == "image"), None)
+        meaning = await qwen_recognize_sticker(img_url)
+        replay_mode = 4  # 表情包回复模式
+    if "帕朵" in raw_msg:
+        # 优先级：@机器人 > 语音关键词 > 文本关键词 > 随机回复
+        if event.is_tome():
+            reply_mode = 3
+        elif any(kw in raw_msg for kw in VOICE_KEYWORDS):
             reply_mode = 2
-        elif rand < (VOICE_PROBABILITY + TEXT_PROBABILITY):
+        elif any(kw in raw_msg for kw in TXT_KEYWORDS):
             reply_mode = 1
         else:
-            return
+            # 冷却时间判定
+            last_time = last_reply_time.get(group_id, 0)
+            if current_time - last_time < GLOBAL_CD:
+                return
+            rand = random.random()
+            if rand < VOICE_PROBABILITY:
+                reply_mode = 2
+            elif rand < (VOICE_PROBABILITY + TEXT_PROBABILITY):
+                reply_mode = 1
+            else:
+                return
+    # 若未命中“帕朵”关键词，则不回复
+    if reply_mode is None:
+        return
 
-    last_reply_time[gid] = current_time
+    last_reply_time[group_id] = current_time
 
     # 3. 帕朵化消息组装
     history = load_target_history(HISTORY_FILE_PATH, TARGET_UID)
     samples = random.sample(history, min(len(history), 40))
 
-    messages = [{"role": "system", "content": f"{SYSTEM_SETTING}\n语气参考：{samples}"}]
-    messages.extend(FEW_SHOT_EXAMPLES)  # 插入范例
-    messages.append({"role": "user", "content": raw_msg})
+    # 1. 先处理好列表转字符串的部分
+    user_samples_str = "\n".join(samples)
+    history_str = load_history_for_group(group_id)
+
+    # 2. 构建结构清晰的 System Content
+    system_content = (
+        f"{SYSTEM_SETTING}\n\n"
+        f"【当前群聊历史】\n{history_str}\n\n"
+        f"【用户的个人历史消息（仅供参考）】\n{user_samples_str}\n\n"
+        "接下来请你用帕朵的口吻回复老板的话，保持语气和人设的一致性！"
+    )
+
+    # 3. 组装规范的 messages
+    messages = [
+        {"role": "system", "content": system_content}
+    ]
 
     try:
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.85,
-            max_tokens=100,
+            temperature=0.85,          # 保持较高的创造力
+            max_tokens=150,            # 限制回复长度，防止长篇大论导致 TTS 语音生成太慢
+            frequency_penalty=0.3,     # 降低重复用词的概率 (0.1 ~ 1.0 即可)
+            presence_penalty=0.7,      # 鼓励模型多聊点新东西 (0.1 ~ 1.0 即可)
+            stop=["用户:", "User:"]    # 看到这些词立刻停止，防止机器人精分替别人说话
         )
+
         full_reply = response.choices[0].message.content.strip()
         # 清洗括号动作描述，用于语音合成
         tts_text = re.sub(r'[\(\uff08\[\u3010].*?[\)\uff09\]\u3011]', '', full_reply).strip() or "喵！"
 
         # 选择参考音频（根据合成文本与回复内容匹配关键词）
-        selected_ref = choose_ref_audio(tts_text + " " + full_reply)
+        # selected_ref = choose_ref_audio(tts_text + " " + full_reply)
 
         # 1. 检查文本中是否含有表情包关键词
-        send_emj = await Sticker_sender.smart_send(bot= bot, event= event, ai_text=full_reply,prob=0.9)
-        if send_emj:
+        # 先判定是否会发送表情包（lamboo变量），如会则先发文本再发表情包
+        send_img = await smart_send(bot, event, full_reply, 1.0)
+        if send_img:
+            logger.info("send_img已发送表情包")
             return
+        # 若不会发表情包，按原逻辑
 
         if reply_mode == 1:
+            logger.info("🎯 触发文本回复！")
             await mimic_chat.send(full_reply)
         elif reply_mode == 2:
-            audio = await get_sovits_audio(tts_text, ref_path=selected_ref)
+            logger.info("🎯 触发语音回复！")
+            audio = await get_sovits_audio(tts_text, ref_path=abs_ref_path)  # 可选：传入选择的参考音频路径
             if audio:
                 await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
             else:
+                logger.warning("语音合成失败，改为发送文本回复")
                 await mimic_chat.send(full_reply)
         elif reply_mode == 3:
+            logger.info("被at了！")
             await mimic_chat.send(full_reply)
-            audio = await get_sovits_audio(tts_text, ref_path=selected_ref)
-            if audio: await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
-
+            audio_ratio = 0.5  # 文本和语音的发送比例（可调整）
+            if random.random() < audio_ratio:
+                audio = await get_sovits_audio(tts_text, ref_path=abs_refer_path)
+                if audio: await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
+                logger.info("同时发送了语音回复")
+        elif reply_mode == 4:
+            logger.info("🎯 触发回复表情包！")
+            # 检测到用户发送表情包，根据识别结果生成回复文本
+            if meaning:
+                messages.append({"role": "user", "content": f"用户发送了一个表情包，识别结果是：{meaning}。请你用帕朵的口吻回复老板，保持语气和人设的一致性！"})
+                response = await client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    temperature=0.95,          # 表情包回复可以更活泼一些
+                    max_tokens=100,
+                    frequency_penalty=0.5,
+                    presence_penalty=0.7,
+                    stop=["用户:", "User:"]
+                )
+                full_reply = response.choices[0].message.content.strip()
+                await mimic_chat.send(full_reply)
+            else:   
+                logger.warning("表情包识别失败，无法生成针对性的回复")
     except FinishedException:
         pass
     except Exception:
