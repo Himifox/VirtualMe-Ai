@@ -11,8 +11,8 @@ driver.register_adapter(OneBotV11Adapter)
 # 显式加载已接入插件，避免把其他半成品模块一起加载。
 # nonebot.load_plugins("plugins")
 nonebot.load_plugin("plugins.pardo")
-nonebot.load_plugin("plugins.GPT_SoVITS")
-nonebot.load_plugin("plugins.Monitor")
+nonebot.load_plugin("plugins.pardo_chat")
+nonebot.load_plugin("plugins.proactive_monitor")
 
 if __name__ == "__main__":
     # 避免占用默认 8080 端口，改为 8081

@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from plugins.budget_guard import chat_budget_exceeded, format_budget_summary
 from plugins.memory import get_history_str, save_bot_reply
 from plugins.proactive_usage import get_proactive_daily_count
-from plugins.Sticker_recognize import qwen_recognize_sticker, smart_send
+from plugins.sticker_service import qwen_recognize_sticker, smart_send
 from plugins.config import *
 from plugins.tts import format_tts_usage_summary, get_tts_audio, get_tts_usage_summary, to_api_path
 from plugins.usage_telemetry import (

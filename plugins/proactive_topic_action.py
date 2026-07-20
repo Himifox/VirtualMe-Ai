@@ -1,6 +1,6 @@
 import random
 import json
-from .Action import BaseAction, ActionActivationType
+from .action_base import BaseAction, ActionActivationType
 from typing import Tuple
 
 class ProactiveTopicAction(BaseAction):

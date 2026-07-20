@@ -6,7 +6,7 @@ from nonebot import get_bot, get_driver, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.log import logger
 
-from plugins.GPT_SoVITS import generate_pardo_reply, get_active_group_ids, is_group_active, save_reply_and_maybe_index
+from plugins.pardo_chat import generate_pardo_reply, get_active_group_ids, is_group_active, save_reply_and_maybe_index
 from plugins.budget_guard import proactive_budget_exceeded
 from plugins.config import (
     PROACTIVE_CHAT_ENABLED,

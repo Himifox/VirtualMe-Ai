@@ -7,7 +7,7 @@ import hashlib
 import aiofiles
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment, Event
 from nonebot.log import logger
-from .Sticker_recognize import load_collection
+from .sticker_service import load_collection
 
 COLLECTION_JSON = "sticker_collection.json"
 # 存储路径
