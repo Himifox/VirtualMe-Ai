@@ -5,7 +5,7 @@ import os
 import time
 import logging
 from typing import List
-from nonebot import on_message
+from nonebot import on_fullmatch, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment, Bot
 from nonebot.exception import FinishedException
 from openai import AsyncOpenAI
@@ -13,12 +13,24 @@ from openai import AsyncOpenAI
 from plugins.memory import get_history_str, save_bot_reply
 from plugins.Sticker_recognize import qwen_recognize_sticker, smart_send
 from plugins.config import *
-from plugins.tts import get_tts_audio, to_api_path
+from plugins.tts import format_tts_usage_summary, get_tts_audio, get_tts_usage_summary, to_api_path
 
 # logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 last_reply_time = {}
+
+tts_usage_query = on_fullmatch(
+    ("#tts统计", "#tts用量", "#语音统计", "#语音花费"),
+    priority=2,
+    block=True,
+)
+
+
+@tts_usage_query.handle()
+async def handle_tts_usage_query():
+    summary = get_tts_usage_summary()
+    await tts_usage_query.finish(format_tts_usage_summary(summary))
 
 
 def is_cooldown_active(group_id: int, current_time: float) -> bool:
