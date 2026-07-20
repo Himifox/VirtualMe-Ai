@@ -1,75 +1,71 @@
+from collections import defaultdict, deque
+
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
-from collections import deque, defaultdict
 
-# 1. 创建全局记忆库
-# key是群号，value是一个最大长度为20的队列
-# 当新的消息进来，旧的消息会自动挤出去
+from plugins.memory_store import save_memory_entry
+
 _history_cache = defaultdict(lambda: deque(maxlen=20))
-
-# 2. 监听所有群消息（优先级设为1，保证最先运行）
 record_msg = on_message(priority=1, block=False)
+
+
+def extract_message_content(event: GroupMessageEvent) -> str:
+    content_parts: list[str] = []
+    for seg in event.message:
+        if seg.type == "text":
+            content_parts.append(seg.data.get("text", ""))
+        elif seg.type == "image":
+            img_url = seg.data.get("url", "")
+            content_parts.append(f"[图片: {img_url}]")
+        elif seg.type == "face":
+            face_id = seg.data.get("id", "")
+            content_parts.append(f"[QQ表情{face_id}]")
+        elif seg.type in {"mface", "marketface"}:
+            content_parts.append("[动画表情]")
+        elif seg.type == "at":
+            at_qq = seg.data.get("qq", "")
+            content_parts.append(f"[@{at_qq}]")
+    return "".join(content_parts).strip()
+
+
+def append_short_term_memory(group_id: int, sender: str, content: str) -> None:
+    if content:
+        _history_cache[group_id].append(f"{sender}: {content}")
 
 
 @record_msg.handle()
 async def _(event: GroupMessageEvent):
     group_id = event.group_id
-    # 获取发送者昵称
     sender_name = event.sender.card or event.sender.nickname or "未知用户"
-    
-    # 遍历消息段，手动拼接完整内容
-    content_parts = []
-    
-    for seg in event.message:
-        if seg.type == "text":
-            # 纯文本直接拼接
-            content_parts.append(seg.data.get("text", ""))
-            
-        elif seg.type == "image":
-            # 提取图片 URL，记录到历史中（方便 VLM 提取）
-            img_url = seg.data.get("url", "")
-            content_parts.append(f"[图片: {img_url}]")
-            
-        elif seg.type == "face":
-            # QQ 自带小黄脸表情
-            face_id = seg.data.get("id", "")
-            content_parts.append(f"[QQ表情{face_id}]")
-            
-        elif seg.type == "mface" or seg.type == "marketface":
-            # 动画/商城表情包
-            content_parts.append("[动画表情]")
-            
-        elif seg.type == "at":
-            # 记录被艾特的人
-            at_qq = seg.data.get("qq", "")
-            content_parts.append(f"[@{at_qq}]")
+    content = extract_message_content(event)
+    if not content:
+        return
 
-    # 将各部分拼接成完整的字符串
-    content = "".join(content_parts).strip()
-    
-    # 如果内容不为空，就存起来
-    if content:
-        # 格式示例: "张三: 大家好 [图片: http...]"
-        entry = f"{sender_name}: {content}"
-        _history_cache[group_id].append(entry)
-        # print(f"已记录群 {group_id} 消息: {entry}") # 调试用
+    append_short_term_memory(group_id, sender_name, content)
+    save_memory_entry(
+        content=content,
+        role="user",
+        group_id=group_id,
+        sender=sender_name,
+        user_id=event.user_id,
+        timestamp=event.time,
+    )
 
-# --- 对外提供的功能函数 ---
 
 def get_history_str(group_id: int) -> str:
-    """
-    获取指定群的历史记录字符串，用于喂给 AI
-    """
     if group_id not in _history_cache:
         return "群聊历史记录为空。"
-    # 把队列里的消息用换行符拼起来
     return "\n".join(_history_cache[group_id])
 
+
 def save_bot_reply(group_id: int, content: str):
-    """
-    手动保存机器人自己回复的内容
-    (因为机器人自己发的消息不会触发 on_message，所以需要手动存)
-    """
-    if content:
-        entry = f"我的发言: {content}"
-        _history_cache[group_id].append(entry)
+    if not content:
+        return
+
+    _history_cache[group_id].append(f"我的发言: {content}")
+    save_memory_entry(
+        content=content,
+        role="bot",
+        group_id=group_id,
+        sender="bot",
+    )

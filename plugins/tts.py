@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import httpx
 
+from plugins.budget_guard import tts_budget_exceeded
 from plugins.config import (
     DASHSCOPE_TTS_API_KEY,
     DASHSCOPE_TTS_MODEL,
@@ -498,6 +499,14 @@ async def get_tts_audio(
     sample_steps: int = 64,
     speed_factor: Optional[float] = None,
 ) -> Optional[str]:
+    if tts_budget_exceeded(get_tts_usage_summary(), _billable_chars(text)):
+        logger.warning("Skip TTS: daily TTS char budget exceeded")
+        try:
+            _record_tts_telemetry("budget_guard", text, False, 0)
+        except Exception:
+            logger.exception("Required TTS telemetry failed while enforcing budget")
+        return None
+
     for candidate in _provider_chain(provider):
         started_at = time.perf_counter()
         if candidate == "doubao":

@@ -208,3 +208,5 @@ __marimo__/
 
 # Runtime telemetry
 data/tts_usage.jsonl
+data/vector_memory.jsonl
+data/model_usage.jsonl

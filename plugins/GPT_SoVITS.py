@@ -10,10 +10,28 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment, Bot
 from nonebot.exception import FinishedException
 from openai import AsyncOpenAI
 
+from plugins.budget_guard import chat_budget_exceeded, format_budget_summary
 from plugins.memory import get_history_str, save_bot_reply
+from plugins.proactive_usage import get_proactive_daily_count
 from plugins.Sticker_recognize import qwen_recognize_sticker, smart_send
 from plugins.config import *
 from plugins.tts import format_tts_usage_summary, get_tts_audio, get_tts_usage_summary, to_api_path
+from plugins.usage_telemetry import (
+    estimate_tokens_from_text,
+    extract_usage_tokens,
+    format_model_usage_summary,
+    get_model_usage_summary,
+    record_model_usage,
+)
+from plugins.vector_memory import (
+    build_vector_memory_index,
+    format_build_stats,
+    format_recalled_memories,
+    format_vector_memory_stats,
+    get_vector_memory_stats,
+    schedule_vector_memory_auto_index,
+    search_vector_memory,
+)
 
 # logging
 logging.basicConfig(level=logging.INFO)
@@ -33,9 +51,89 @@ async def handle_tts_usage_query():
     await tts_usage_query.finish(format_tts_usage_summary(summary))
 
 
+vector_memory_stats_query = on_fullmatch("#记忆统计", priority=2, block=True)
+vector_memory_build_query = on_fullmatch("#构建记忆索引", priority=2, block=True)
+model_usage_query = on_fullmatch(("#模型用量", "#token统计"), priority=2, block=True)
+budget_usage_query = on_fullmatch("#预算统计", priority=2, block=True)
+
+
+def is_admin_event(event: GroupMessageEvent) -> bool:
+    return str(event.user_id).strip() == ADMIN_UID
+
+
+@vector_memory_stats_query.handle()
+async def handle_vector_memory_stats(event: GroupMessageEvent):
+    if not is_admin_event(event):
+        await vector_memory_stats_query.finish("老板，这个账本只能管理员看哦。")
+    await vector_memory_stats_query.finish(format_vector_memory_stats(get_vector_memory_stats()))
+
+
+@vector_memory_build_query.handle()
+async def handle_vector_memory_build(event: GroupMessageEvent):
+    if not is_admin_event(event):
+        await vector_memory_build_query.finish("老板，这个索引只能管理员整理哦。")
+    stats = await build_vector_memory_index()
+    await vector_memory_build_query.finish(format_build_stats(stats))
+
+
+@model_usage_query.handle()
+async def handle_model_usage_query(event: GroupMessageEvent):
+    if not is_admin_event(event):
+        await model_usage_query.finish("老板，这个账本只能管理员看哦。")
+    await model_usage_query.finish(format_model_usage_summary(get_model_usage_summary()))
+
+
+@budget_usage_query.handle()
+async def handle_budget_usage_query(event: GroupMessageEvent):
+    if not is_admin_event(event):
+        await budget_usage_query.finish("老板，这个预算账本只能管理员看哦。")
+    await budget_usage_query.finish(
+        format_budget_summary(
+            get_model_usage_summary(),
+            get_tts_usage_summary(),
+            proactive_used=get_proactive_daily_count(),
+        )
+    )
+
+
 def is_cooldown_active(group_id: int, current_time: float) -> bool:
     last_time = last_reply_time.get(group_id, 0)
     return current_time - last_time < GLOBAL_CD
+
+
+def save_reply_and_maybe_index(group_id: int, content: str) -> None:
+    save_bot_reply(group_id, content)
+    if schedule_vector_memory_auto_index():
+        logger.info("Vector memory auto index scheduled")
+
+
+def record_chat_completion_usage(
+    *,
+    success: bool,
+    started_at: float,
+    system_content: str,
+    user_content: str,
+    reply_content: str = "",
+    usage: object = None,
+    error: str = "",
+) -> None:
+    try:
+        tokens = extract_usage_tokens(usage)
+        record_model_usage(
+            kind="chat_completion",
+            model=MODEL_NAME,
+            success=success,
+            elapsed_ms=round((time.perf_counter() - started_at) * 1000),
+            prompt_tokens=tokens["prompt_tokens"],
+            completion_tokens=tokens["completion_tokens"],
+            total_tokens=tokens["total_tokens"],
+            estimated_tokens=False,
+            input_chars=len(system_content or "") + len(user_content or ""),
+            output_chars=len(reply_content or ""),
+            error=error,
+        )
+    except Exception:
+        logger.exception("Failed to record chat completion usage telemetry")
 
 # --- 帕朵菲莉丝长人设 (System Prompt) ---
 SYSTEM_SETTING = """
@@ -174,27 +272,62 @@ async def generate_pardo_reply(
     samples = random.sample(history, min(len(history), 40))
     user_samples_str = "\n".join(samples)
     history_str = load_history_for_group(group_id)
+    recalled_memory_str = ""
+    if VECTOR_MEMORY_ENABLED:
+        try:
+            recalled_memories = await search_vector_memory(user_content, group_id)
+            recalled_memory_str = format_recalled_memories(recalled_memories)
+        except Exception:
+            logger.exception("vector memory recall failed")
+
+    long_term_memory_block = f"【相关长期记忆】\n{recalled_memory_str}\n\n" if recalled_memory_str else ""
 
     system_content = (
         f"{SYSTEM_SETTING}\n\n"
         f"【当前群聊历史】\n{history_str}\n\n"
+        f"{long_term_memory_block}"
         f"【用户的个人历史消息（仅供参考）】\n{user_samples_str}\n\n"
         "接下来请你用帕朵的口吻回复老板的话，保持语气和人设的一致性！"
     )
 
-    response = await client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-        frequency_penalty=frequency_penalty,
-        presence_penalty=presence_penalty,
-        stop=["用户:", "User:"],
-    )
-    return response.choices[0].message.content.strip()
+    requested_tokens = estimate_tokens_from_text(system_content) + estimate_tokens_from_text(user_content) + max_tokens
+    if chat_budget_exceeded(get_model_usage_summary(), requested_tokens):
+        logger.warning("Skip chat completion: daily chat token budget exceeded")
+        return "老板，今天聊天预算见底啦，咱先省点小钱，晚点再聊哦。"
+
+    started_at = time.perf_counter()
+    try:
+        response = await client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            stop=["用户:", "User:"],
+        )
+        reply_content = response.choices[0].message.content.strip()
+        record_chat_completion_usage(
+            success=True,
+            started_at=started_at,
+            system_content=system_content,
+            user_content=user_content,
+            reply_content=reply_content,
+            usage=getattr(response, "usage", None),
+        )
+        return reply_content
+    except Exception as exc:
+        record_chat_completion_usage(
+            success=False,
+            started_at=started_at,
+            system_content=system_content,
+            user_content=user_content,
+            error=str(exc),
+        )
+        raise
 
 # Call this function at the start of the script to ensure the directory and file exist
 def ensure_ref_audio_exists():
@@ -294,32 +427,32 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
         send_img = await smart_send(bot, event, full_reply, 1.0)
         if send_img:
             logger.info("send_img已发送表情包")
-            save_bot_reply(group_id, full_reply)
+            save_reply_and_maybe_index(group_id, full_reply)
             return
         # 若不会发表情包，按原逻辑
 
         if reply_mode == 1:
             logger.info("🎯 触发文本回复！")
             await mimic_chat.send(full_reply)
-            save_bot_reply(group_id, full_reply)
+            save_reply_and_maybe_index(group_id, full_reply)
         elif reply_mode == 2:
             logger.info("🎯 触发语音回复！")
             start_time = time.perf_counter() # 使用高精度计时器
             audio = await get_tts_audio(tts_text, ref_path=REFER_WAV_PATH)  # 可选：传入选择的参考音频路径
             if audio:
                 await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
-                save_bot_reply(group_id, full_reply)
+                save_reply_and_maybe_index(group_id, full_reply)
                 end_time = time.perf_counter()
                 duration = end_time - start_time
                 logger.info(f"语音合成耗时: {duration:.2f} 秒")
             else:
                 logger.warning("语音合成失败，改为发送文本回复")
                 await mimic_chat.send(full_reply)
-                save_bot_reply(group_id, full_reply)
+                save_reply_and_maybe_index(group_id, full_reply)
         elif reply_mode == 3:
             logger.info("被at了！")
             await mimic_chat.send(full_reply)
-            save_bot_reply(group_id, full_reply)
+            save_reply_and_maybe_index(group_id, full_reply)
             audio_ratio = 0.5  # 文本和语音的发送比例（可调整）
             if random.random() < audio_ratio:
                 audio = await get_tts_audio(tts_text, ref_path=REFER_WAV_PATH)
@@ -328,7 +461,7 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
         elif reply_mode == 4:
             logger.info("🎯 触发回复表情包！")
             await mimic_chat.send(full_reply)
-            save_bot_reply(group_id, full_reply)
+            save_reply_and_maybe_index(group_id, full_reply)
     except FinishedException:
         pass
     except Exception:

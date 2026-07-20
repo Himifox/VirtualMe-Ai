@@ -6,14 +6,15 @@ from nonebot import get_bot, get_driver, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.log import logger
 
-from plugins.GPT_SoVITS import generate_pardo_reply, get_active_group_ids, is_group_active
+from plugins.GPT_SoVITS import generate_pardo_reply, get_active_group_ids, is_group_active, save_reply_and_maybe_index
+from plugins.budget_guard import proactive_budget_exceeded
 from plugins.config import (
     PROACTIVE_CHAT_ENABLED,
     PROACTIVE_CHECK_INTERVAL_MINUTES,
     PROACTIVE_SILENCE_MINUTES,
     PROACTIVE_TEXT_PROBABILITY,
 )
-from plugins.memory import save_bot_reply
+from plugins.proactive_usage import get_proactive_daily_count, increment_proactive_daily_count
 
 last_active_time: dict[int, datetime] = {}
 activity_listener = on_message(priority=3, block=False)
@@ -51,13 +52,17 @@ async def check_silence():
         last_active_time[group_id] = now
         if random.random() > proactive_probability():
             continue
+        if proactive_budget_exceeded(get_proactive_daily_count()):
+            logger.warning("Skip proactive chat: daily proactive limit exceeded")
+            continue
 
         try:
             bot = get_bot()
             prompt = "群里安静了一会儿，请用帕朵的口吻主动找一个轻松话题，简短破冰。"
             reply = await generate_pardo_reply(group_id, prompt, temperature=0.95)
             await bot.send_group_msg(group_id=group_id, message=reply)
-            save_bot_reply(group_id, reply)
+            save_reply_and_maybe_index(group_id, reply)
+            increment_proactive_daily_count()
             logger.info("Sent proactive chat message to group %s", group_id)
         except Exception:
             logger.exception("Failed to send proactive chat message to group %s", group_id)
