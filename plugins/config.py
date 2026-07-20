@@ -49,6 +49,25 @@ QWEN_VL_API_KEY = _getenv("QWEN_VL_API_KEY")
 BASE_URL = _getenv("BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 MODEL_NAME = _getenv("MODEL_NAME", "qwen-plus")
 QWEN_VL_MODEL = "qwen-vl-plus"
+
+TTS_PROVIDER = _getenv("TTS_PROVIDER", "auto").strip().lower()
+TTS_FALLBACK_PROVIDER = _getenv("TTS_FALLBACK_PROVIDER", "gsv").strip().lower()
+TTS_FALLBACK_ENABLED = _getenv_bool("TTS_FALLBACK_ENABLED", True)
+
+DASHSCOPE_TTS_API_KEY = _getenv("DASHSCOPE_TTS_API_KEY", API_KEY)
+DASHSCOPE_TTS_WS_URL = _getenv("DASHSCOPE_TTS_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime")
+DASHSCOPE_TTS_MODEL = _getenv("DASHSCOPE_TTS_MODEL", "qwen3-tts-flash-realtime-2025-11-27")
+DASHSCOPE_TTS_VOICE = _getenv("DASHSCOPE_TTS_VOICE", "Momo")
+
+DOUBAO_TTS_API_KEY = _getenv("DOUBAO_TTS_API_KEY")
+DOUBAO_TTS_BASE_URL = _getenv("DOUBAO_TTS_BASE_URL", "https://openspeech.bytedance.com")
+DOUBAO_TTS_RESOURCE_ID = _getenv("DOUBAO_TTS_RESOURCE_ID", "seed-icl-2.0")
+DOUBAO_TTS_VOICE = _getenv("DOUBAO_TTS_VOICE")
+DOUBAO_TTS_SPEED_RATIO = _getenv_float("DOUBAO_TTS_SPEED_RATIO", 1.08)
+DOUBAO_TTS_CONTEXT_TEXT = _getenv(
+    "DOUBAO_TTS_CONTEXT_TEXT",
+    "Use natural, lively spoken Chinese. Keep the voice clear and slightly brisk.",
+)
 HISTORY_FILE_PATH = _getenv("HISTORY_FILE_PATH", "MSG/group_712851492_20260203_231902.json")
 
 ADMIN_UID = _getenv("ADMIN_UID", "3461737415")  # 你的纯数字 UID

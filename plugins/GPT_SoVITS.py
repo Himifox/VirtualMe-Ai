@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from plugins.memory import get_history_str, save_bot_reply
 from plugins.Sticker_recognize import qwen_recognize_sticker, smart_send
 from plugins.config import *
-from plugins.tts import get_sovits_audio, to_api_path
+from plugins.tts import get_tts_audio, to_api_path
 
 # logging
 logging.basicConfig(level=logging.INFO)
@@ -293,7 +293,7 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
         elif reply_mode == 2:
             logger.info("🎯 触发语音回复！")
             start_time = time.perf_counter() # 使用高精度计时器
-            audio = await get_sovits_audio(tts_text, ref_path=REFER_WAV_PATH)  # 可选：传入选择的参考音频路径
+            audio = await get_tts_audio(tts_text, ref_path=REFER_WAV_PATH)  # 可选：传入选择的参考音频路径
             if audio:
                 await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
                 save_bot_reply(group_id, full_reply)
@@ -310,7 +310,7 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
             save_bot_reply(group_id, full_reply)
             audio_ratio = 0.5  # 文本和语音的发送比例（可调整）
             if random.random() < audio_ratio:
-                audio = await get_sovits_audio(tts_text, ref_path=REFER_WAV_PATH)
+                audio = await get_tts_audio(tts_text, ref_path=REFER_WAV_PATH)
                 if audio: await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
                 logger.info("同时发送了语音回复")
         elif reply_mode == 4:

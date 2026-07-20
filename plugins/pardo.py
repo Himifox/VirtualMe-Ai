@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from plugins.config import *
-from plugins.tts import get_sovits_audio
+from plugins.tts import get_tts_audio
 # logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,9 +30,9 @@ async def _(bot: Bot):
     
     try:
         # 调用你插件里已有的语音合成函数
-        # 注意：这里务必确保你的 get_sovits_audio 里的 batch_size 已经改成了 1
+        # Cloud TTS is preferred; GPT-SoVITS remains the fallback provider.
         
-        audio_b64 = await get_sovits_audio(
+        audio_b64 = await get_tts_audio(
             startup_text,
             REFER_WAV_PATH,
             batch_size=50,
