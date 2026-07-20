@@ -34,7 +34,7 @@ OneBot V11 事件
 | 模块 | 状态 | 说明 |
 | --- | --- | --- |
 | QQ 群聊接入 | 可用 | 基于 NoneBot 和 OneBot V11，入口为 `bot.py` |
-| 角色回复 | 可用 | 当前角色为帕朵菲莉丝，主聊天逻辑在 `plugins/GPT_SoVITS.py` |
+| 角色回复 | 可用 | 当前角色为帕朵菲莉丝，主聊天逻辑在 `plugins/pardo_chat.py` |
 | 表情识别 | 可用 | 使用 Qwen-VL 识别图片/表情包后生成角色化回复 |
 | TTS 语音 | 可用 | 支持豆包、DashScope，GPT-SoVITS 可作为 fallback |
 | TTS 遥测 | 可用 | 记录 provider、成功/失败、字符数、估算费用、耗时 |
@@ -53,8 +53,8 @@ OneBot V11 事件
 ├── .env.example                 # 环境变量模板，不包含真实密钥
 ├── chat_data.jsonl              # 长期记忆文件，运行时数据
 ├── plugins/
-│   ├── GPT_SoVITS.py            # 主聊天插件、管理员命令、回复链路
-│   ├── Monitor.py               # 主动聊天监控
+│   ├── pardo_chat.py            # 主聊天插件、管理员命令、回复链路
+│   ├── proactive_monitor.py     # 主动聊天监控
 │   ├── config.py                # 唯一配置入口
 │   ├── tts.py                   # 云端 TTS + GSV fallback + TTS 遥测
 │   ├── memory.py                # 短期记忆监听
@@ -64,7 +64,9 @@ OneBot V11 事件
 │   ├── budget_guard.py          # 每日预算护栏
 │   ├── proactive_usage.py       # 主动聊天每日计数
 │   ├── pardo.py                 # 基础角色插件
-│   └── Sticker_recognize.py     # 表情包识别
+│   ├── sticker_service.py       # 表情包识别、学习与发送辅助
+│   ├── recorder.py              # 长期记忆写入兼容 helper
+│   └── README.md                # 插件命名与职责说明
 ├── ref_audio/                   # GPT-SoVITS 参考音频
 ├── sticker_collection/          # 表情包素材
 └── data/                        # 运行时索引、遥测文件目录
@@ -207,8 +209,8 @@ data/vector_memory.jsonl
 
 ```python
 nonebot.load_plugin("plugins.pardo")
-nonebot.load_plugin("plugins.GPT_SoVITS")
-nonebot.load_plugin("plugins.Monitor")
+nonebot.load_plugin("plugins.pardo_chat")
+nonebot.load_plugin("plugins.proactive_monitor")
 ```
 
 没有使用 `nonebot.load_plugins("plugins")` 扫描整个目录，避免把半成品或实验模块意外接入线上流程。
@@ -229,7 +231,7 @@ foreach ($file in $files) {
 
 ```powershell
 $env:PROACTIVE_CHAT_ENABLED='false'
-.\.venv\Scripts\python.exe -c "import nonebot; nonebot.init(); import plugins.GPT_SoVITS; import plugins.Monitor; print('ok')"
+.\.venv\Scripts\python.exe -c "import nonebot; nonebot.init(); import plugins.pardo_chat; import plugins.proactive_monitor; print('ok')"
 ```
 
 ## 维护建议
