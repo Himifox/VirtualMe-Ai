@@ -7,13 +7,12 @@ import aiohttp
 import aiofiles
 from nonebot import on_message, on_command, logger
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment, Message, GroupMessageEvent, PrivateMessageEvent
+from plugins.config import QWEN_VL_API_KEY, QWEN_VL_MODEL
 
 #==============================
 # 配置项
 #==============================
 
-QWEN_API_KEY = "sk-5a6373479d5d4d538b872e537fabfa28"
-QWEN_MODEL = "qwen-vl-plus"
 COLLECTION_DIR = "sticker_collection"
 COLLECTION_JSON = "sticker_collection.json"
 #===================================
@@ -104,10 +103,14 @@ async def _(bot: Bot, event: Event):
                     print(f"❌ 下载图片失败: {e}")
 
 async def qwen_recognize_sticker(img_url: str) -> str | None:
+    if not QWEN_VL_API_KEY:
+        logger.warning("QWEN_VL_API_KEY is not configured; skip sticker recognition.")
+        return None
+
     api_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {QWEN_API_KEY}",
+        "Authorization": f"Bearer {QWEN_VL_API_KEY}",
     }
     prompt = """
         请你识别表情包意思，采用关键词，使用文字和颜文字，如：“害羞”，“盯着你”，“QAQ”，
@@ -120,7 +123,7 @@ async def qwen_recognize_sticker(img_url: str) -> str | None:
         案例3："这张图片的意思是：“困惑”。关键词：卖萌、困惑、不知道怎么办、QAQ（表示无奈或无语）"
     """
     pyload = {
-        "model": QWEN_MODEL,
+        "model": QWEN_VL_MODEL,
         "input": {"messages": [{"role": "user", "content": [{"image": img_url}, {"text": prompt}]}]},
         "parameters": {"result_format": "message"},
     }

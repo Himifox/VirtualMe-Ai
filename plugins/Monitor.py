@@ -1,26 +1,79 @@
-from nonebot import require, get_bot
+import random
+import asyncio
 from datetime import datetime, timedelta
 
-# 引入定时任务插件
-require("nonebot_plugin_apscheduler")
-from nonebot_plugin_apscheduler import scheduler
+from nonebot import get_bot, get_driver, on_message
+from nonebot.adapters.onebot.v11 import GroupMessageEvent
+from nonebot.log import logger
 
-# 记录最后一次消息的时间
-last_active_time = datetime.now()
+from plugins.GPT_SoVITS import generate_pardo_reply, get_active_group_ids, is_group_active
+from plugins.config import (
+    PROACTIVE_CHAT_ENABLED,
+    PROACTIVE_CHECK_INTERVAL_MINUTES,
+    PROACTIVE_SILENCE_MINUTES,
+    PROACTIVE_TEXT_PROBABILITY,
+)
+from plugins.memory import save_bot_reply
 
-# 假设的一个阈值：10分钟不说话就触发
-SILENCE_THRESHOLD = timedelta(minutes=10)
+last_active_time: dict[int, datetime] = {}
+activity_listener = on_message(priority=3, block=False)
+driver = get_driver()
 
-@scheduler.scheduled_job("interval", minutes=1, id="check_silence")
+
+def mark_group_active(group_id: int) -> None:
+    last_active_time[group_id] = datetime.now()
+
+
+def proactive_probability() -> float:
+    return min(max(PROACTIVE_TEXT_PROBABILITY, 0.0), 1.0)
+
+
+@activity_listener.handle()
+async def _(event: GroupMessageEvent):
+    if PROACTIVE_CHAT_ENABLED and is_group_active(event.group_id):
+        mark_group_active(event.group_id)
+
+
+
 async def check_silence():
-    global last_active_time
     now = datetime.now()
-    
-    if now - last_active_time > SILENCE_THRESHOLD:
-        # 触发主动找话题逻辑
-        bot = get_bot()
-        # 这里需要逻辑去调用 LLM，询问：
-        # “现在冷场了，请使用 proactive_topic 动作为你的观众找个话题。”
-        
-        # 成功触发后，重置时间防止刷屏
-        last_active_time = now
+    threshold = timedelta(minutes=PROACTIVE_SILENCE_MINUTES)
+
+    for group_id in get_active_group_ids():
+        last_time = last_active_time.get(group_id)
+        if last_time is None:
+            last_active_time[group_id] = now
+            continue
+
+        if now - last_time <= threshold:
+            continue
+
+        last_active_time[group_id] = now
+        if random.random() > proactive_probability():
+            continue
+
+        try:
+            bot = get_bot()
+            prompt = "群里安静了一会儿，请用帕朵的口吻主动找一个轻松话题，简短破冰。"
+            reply = await generate_pardo_reply(group_id, prompt, temperature=0.95)
+            await bot.send_group_msg(group_id=group_id, message=reply)
+            save_bot_reply(group_id, reply)
+            logger.info("Sent proactive chat message to group %s", group_id)
+        except Exception:
+            logger.exception("Failed to send proactive chat message to group %s", group_id)
+
+
+async def monitor_silence_loop():
+    interval_seconds = max(PROACTIVE_CHECK_INTERVAL_MINUTES, 1) * 60
+    while True:
+        await asyncio.sleep(interval_seconds)
+        await check_silence()
+
+
+if PROACTIVE_CHAT_ENABLED:
+    @driver.on_startup
+    async def _():
+        asyncio.create_task(monitor_silence_loop())
+        logger.info("Proactive chat monitor is enabled.")
+else:
+    logger.info("Proactive chat monitor is disabled.")

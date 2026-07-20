@@ -1,68 +1,29 @@
-import base64
 import json
 import re
 import random
-import httpx
 import os
 import time
 import logging
-from typing import Optional, Dict, List
+from typing import List
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment, Bot
 from nonebot.exception import FinishedException
 from openai import AsyncOpenAI
 
 from plugins.memory import get_history_str, save_bot_reply
-from .import Sticker_sender
-from plugins.Sticker_recognize import smart_send
+from plugins.Sticker_recognize import qwen_recognize_sticker, smart_send
 from plugins.config import *
+from plugins.tts import get_sovits_audio, to_api_path
 
 # logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# ===========================================
-# 
-# ===========================================
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-def to_api_path(rel_path: str) -> str:
-    """解决 API 找不到文件的核心：转为绝对路径且强制使用正斜杠"""
-    abs_path = os.path.join(BASE_DIR, rel_path)
-    return abs_path.replace("\\", "/")
-
-# ================= 配置区域 =================
-SOVITS_API_URL = "http://127.0.0.1:9880/tts"
-REFER_WAV_PATH = to_api_path("ref_audio/罐头.wav")  # 建议换成帕朵的参考音频
-PROMPT_TEXT = "罐头，你怎么才回来……嗯？找到了个开店的好地方？在哪在哪？"  # 对应参考音频的文字
-AUX_PATH_1 = "ref_audio/罐头，你怎么才回来……嗯？找到了个开店的好地方？在哪在哪？.wav"
-AUX_PATH_2 = "ref_audio/喵喵喵 喵喵喵 喵喵喵.wav"
-aux_ref_audio_paths = [AUX_PATH_1, AUX_PATH_2]
-PROMPT_LANG = "zh"
-# 参考音频目录与关键词映射（可在此手动添加显式映射）
-REF_AUDIO_DIR = "ref_audio"
-REF_KEYWORD_MAP: Dict[str, str] = {}
-# 缓存配置：避免每次请求都扫描目录
-REF_MAP_CACHE: Optional[Dict[str, str]] = None
-REF_MAP_CACHE_TIME: float = 0
-# 缓存过期时间（秒）
-REF_MAP_TTL = 300
-
-API_KEY = "sk-156ebc486b924ebc8b94656f4a3cfa86"
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-MODEL_NAME = "qwen-plus"
-HISTORY_FILE_PATH = "MSG/group_712851492_20260203_231902.json"
-
-ADMIN_UID = "3461737415"  # 你的纯数字 UID
-TARGET_UID = "u_MkWCKLdJG7Jubt9cQXbSpg"  # 语料学习目标 UID
-ACTIVATE_COMMAND = "#Neko"  # 激活指令
-WHITE_LIST_FILE = "active_groups.json"
-
-TEXT_PROBABILITY = 0.9
-VOICE_PROBABILITY = 0.5
-GLOBAL_CD = 30  # 全局冷却时间，单位秒
-VOICE_KEYWORDS = [ "语音", "声音", "唱歌", "听听", "想你了帕朵"]
-TXT_KEYWORDS = ["帕朵"]
 last_reply_time = {}
+
+
+def is_cooldown_active(group_id: int, current_time: float) -> bool:
+    last_time = last_reply_time.get(group_id, 0)
+    return current_time - last_time < GLOBAL_CD
 
 # --- 帕朵菲莉丝长人设 (System Prompt) ---
 SYSTEM_SETTING = """
@@ -153,6 +114,14 @@ def save_white_list(data) -> None:
 
 active_groups = load_white_list()
 
+
+def is_group_active(group_id: int) -> bool:
+    return group_id in active_groups
+
+
+def get_active_group_ids() -> set[int]:
+    return set(active_groups)
+
 # =======================================
 # 
 # =======================================
@@ -179,6 +148,42 @@ def load_target_history(filepath: str, target_uid: str) -> List[str]:
         logger.exception("load_target_history failed")
         return []
 
+
+async def generate_pardo_reply(
+    group_id: int,
+    user_content: str,
+    *,
+    temperature: float = 0.85,
+    max_tokens: int = 100,
+    frequency_penalty: float = 0.3,
+    presence_penalty: float = 0.7,
+) -> str:
+    history = load_target_history(HISTORY_FILE_PATH, TARGET_UID)
+    samples = random.sample(history, min(len(history), 40))
+    user_samples_str = "\n".join(samples)
+    history_str = load_history_for_group(group_id)
+
+    system_content = (
+        f"{SYSTEM_SETTING}\n\n"
+        f"【当前群聊历史】\n{history_str}\n\n"
+        f"【用户的个人历史消息（仅供参考）】\n{user_samples_str}\n\n"
+        "接下来请你用帕朵的口吻回复老板的话，保持语气和人设的一致性！"
+    )
+
+    response = await client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
+        stop=["用户:", "User:"],
+    )
+    return response.choices[0].message.content.strip()
+
 # Call this function at the start of the script to ensure the directory and file exist
 def ensure_ref_audio_exists():
     """
@@ -188,58 +193,8 @@ def ensure_ref_audio_exists():
         os.makedirs(REF_AUDIO_DIR)
         logger.info(f"Created missing directory: {REF_AUDIO_DIR}")
 
-    if not os.path.exists(REFER_WAV_PATH):
-        with open(REFER_WAV_PATH, "wb") as f:
-            f.write(b"")  # Create an empty file as a placeholder
-        logger.warning(f"Created missing reference audio file: {REFER_WAV_PATH}")
-
-# Ensure auxiliary reference audio files exist
-valid_aux_ref_audio_paths = []
-for aux_path in aux_ref_audio_paths:
-    if os.path.exists(aux_path):
-        valid_aux_ref_audio_paths.append(aux_path)
-    else:
-        logger.warning(f"Audio file does not exist, skipping: {aux_path}")
-
-# Update the aux_ref_audio_paths to only include valid paths
-aux_ref_audio_paths = valid_aux_ref_audio_paths
-
-async def get_sovits_audio(text: str, ref_path: Optional[str] = None) -> Optional[str]:
-    try:
-        target_ref = to_api_path(ref_path) if ref_path else REFER_WAV_PATH
-        # 物理检查：如果文件真的不在，直接拦截并报错
-        if not os.path.exists(target_ref):
-            logger.error(f"❌ 物理路径不存在，请检查文件: {target_ref}")
-            return None
-
-        async with httpx.AsyncClient(timeout=160.0, trust_env=False) as http_client:
-            abs_refer_path = os.path.abspath(ref_path).replace("\\", "/") if ref_path else ""
-            params = {
-                "text": text,
-                "text_lang": "zh",
-                "ref_audio_path": target_ref,
-                # "aux_ref_audio_paths": aux_ref_audio_paths,
-                "prompt_text": PROMPT_TEXT,
-                "prompt_lang": PROMPT_LANG,
-                "top_k": 5,
-                "top_p": 0.95,
-                "temperature": 0.9,
-                "text_split_method": "cut5",
-                "batch_size": 30,
-                "seed": -1,
-                # "speed_factor": 1.1,
-                "parallel_infer": True,
-                "Repetition_Penalty": 1.4,
-                "sample_steps": 64,
-                "fragment_interval": 0.3
-            }
-            r = await http_client.post(SOVITS_API_URL, timeout=120.0, json=params, headers={"Content-Type": "application/json"})
-            if r.status_code == 200:
-                return base64.b64encode(r.content).decode("utf-8")
-            logger.error("SOVITS API error %s - %s", r.status_code, r.text)
-    except Exception as e:
-        logger.exception(f"Voice synthesis exception: {e}")
-    return None
+    if not os.path.exists(to_api_path(REFER_WAV_PATH)):
+        logger.warning(f"Reference audio file does not exist: {REFER_WAV_PATH}")
 
 
 @mimic_chat.handle()
@@ -248,6 +203,7 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
     sender_uid = str(event.user_id).strip()
     raw_msg = event.get_plaintext().strip()
     raw_reply = event.message
+    meaning = None
     """
     # 让机器人做一个表情包回应
     for seg in raw_reply:
@@ -281,15 +237,15 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
 
     # 2. 回复模式判定（优化版）
     reply_mode = None
-    if raw_reply and any(seg.type == "image" for seg in raw_reply):
+    if event.is_tome():
+        reply_mode = 3
+    elif raw_reply and any(seg.type == "image" for seg in raw_reply):
         img_url = next((seg.data.get("url", "") for seg in raw_reply if seg.type == "image"), None)
         meaning = await qwen_recognize_sticker(img_url)
-        replay_mode = 4  # 表情包回复模式
-    if "帕朵" in raw_msg:
-        # 优先级：@机器人 > 语音关键词 > 文本关键词 > 随机回复
-        if event.is_tome():
-            reply_mode = 3
-        elif any(kw in raw_msg for kw in VOICE_KEYWORDS):
+        reply_mode = 4  # 表情包回复模式
+    elif "帕朵" in raw_msg:
+        # 优先级：语音关键词 > 文本关键词 > 随机回复
+        if any(kw in raw_msg for kw in VOICE_KEYWORDS):
             reply_mode = 2
         elif any(kw in raw_msg for kw in TXT_KEYWORDS):
             reply_mode = 1
@@ -304,43 +260,17 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
                     reply_mode = 1
                 else:
                     return
-    # 若未命中“帕朵”关键词，则不回复
+    # 若未命中触发条件，则不回复
     if reply_mode is None:
         return
 
-    # 3. 帕朵化消息组装
-    history = load_target_history(HISTORY_FILE_PATH, TARGET_UID)
-    samples = random.sample(history, min(len(history), 40))
-
-    # 1. 先处理好列表转字符串的部分
-    user_samples_str = "\n".join(samples)
-    history_str = load_history_for_group(group_id)
-
-    # 2. 构建结构清晰的 System Content
-    system_content = (
-        f"{SYSTEM_SETTING}\n\n"
-        f"【当前群聊历史】\n{history_str}\n\n"
-        f"【用户的个人历史消息（仅供参考）】\n{user_samples_str}\n\n"
-        "接下来请你用帕朵的口吻回复老板的话，保持语气和人设的一致性！"
-    )
-
-    # 3. 组装规范的 messages
-    messages = [
-        {"role": "system", "content": system_content}
-    ]
+    if reply_mode == 4:
+        user_content = f"用户发送了一个表情包，识别结果是：{meaning or '识别失败'}。请你用帕朵的口吻回复老板，保持语气和人设的一致性！"
+    else:
+        user_content = raw_msg
 
     try:
-        response = await client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.85,          # 保持较高的创造力
-            max_tokens=100,            # 限制回复长度，防止长篇大论导致 TTS 语音生成太慢
-            frequency_penalty=0.3,     # 降低重复用词的概率 (0.1 ~ 1.0 即可)
-            presence_penalty=0.7,      # 鼓励模型多聊点新东西 (0.1 ~ 1.0 即可)
-            stop=["用户:", "User:"]    # 看到这些词立刻停止，防止机器人精分替别人说话
-        )
-
-        full_reply = response.choices[0].message.content.strip()
+        full_reply = await generate_pardo_reply(group_id, user_content)
         # 清洗括号动作描述，用于语音合成
         tts_text = re.sub(r'[\(\uff08\[\u3010].*?[\)\uff09\]\u3011]', '', full_reply).strip() or "喵！"
       
@@ -352,28 +282,32 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
         send_img = await smart_send(bot, event, full_reply, 1.0)
         if send_img:
             logger.info("send_img已发送表情包")
+            save_bot_reply(group_id, full_reply)
             return
         # 若不会发表情包，按原逻辑
 
         if reply_mode == 1:
             logger.info("🎯 触发文本回复！")
             await mimic_chat.send(full_reply)
+            save_bot_reply(group_id, full_reply)
         elif reply_mode == 2:
             logger.info("🎯 触发语音回复！")
             start_time = time.perf_counter() # 使用高精度计时器
             audio = await get_sovits_audio(tts_text, ref_path=REFER_WAV_PATH)  # 可选：传入选择的参考音频路径
             if audio:
                 await mimic_chat.send(MessageSegment.record(f"base64://{audio}"))
+                save_bot_reply(group_id, full_reply)
                 end_time = time.perf_counter()
                 duration = end_time - start_time
                 logger.info(f"语音合成耗时: {duration:.2f} 秒")
-                await mimic_chat.send(f"本次语音合成耗时：{duration:.2f} 秒")
             else:
                 logger.warning("语音合成失败，改为发送文本回复")
                 await mimic_chat.send(full_reply)
+                save_bot_reply(group_id, full_reply)
         elif reply_mode == 3:
             logger.info("被at了！")
             await mimic_chat.send(full_reply)
+            save_bot_reply(group_id, full_reply)
             audio_ratio = 0.5  # 文本和语音的发送比例（可调整）
             if random.random() < audio_ratio:
                 audio = await get_sovits_audio(tts_text, ref_path=REFER_WAV_PATH)
@@ -381,22 +315,8 @@ async def handle_chat(bot:Bot,event: GroupMessageEvent):
                 logger.info("同时发送了语音回复")
         elif reply_mode == 4:
             logger.info("🎯 触发回复表情包！")
-            # 检测到用户发送表情包，根据识别结果生成回复文本
-            if meaning:
-                messages.append({"role": "user", "content": f"用户发送了一个表情包，识别结果是：{meaning}。请你用帕朵的口吻回复老板，保持语气和人设的一致性！"})
-                response = await client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    temperature=0.95,          # 表情包回复可以更活泼一些
-                    max_tokens=100,
-                    frequency_penalty=0.5,
-                    presence_penalty=0.7,
-                    stop=["用户:", "User:"]
-                )
-                full_reply = response.choices[0].message.content.strip()
-                await mimic_chat.send(full_reply)
-            else:   
-                logger.warning("表情包识别失败，无法生成针对性的回复")
+            await mimic_chat.send(full_reply)
+            save_bot_reply(group_id, full_reply)
     except FinishedException:
         pass
     except Exception:

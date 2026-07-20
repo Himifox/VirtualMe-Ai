@@ -9,14 +9,7 @@ from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment
 from nonebot.exception import FinishedException
 from openai import AsyncOpenAI
-
-# ================= 配置区域 =================
-API_KEY = "sk-061d4f46a02244f9acb9f51ee2c0a5dd"
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-MODEL_NAME = "qwen-plus"
-HISTORY_FILE_PATH = "MSG/group_712851492_20260203_231902.json"
-TARGET_UID = "u_MkWCKLdJG7Jubt9cQXbSpg"
-# ===========================================
+from plugins.config import API_KEY, BASE_URL, MODEL_NAME, HISTORY_FILE_PATH, TARGET_UID
 
 client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
 mimic_chat = on_message(priority=99, block=False)

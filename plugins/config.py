@@ -1,8 +1,34 @@
 import os
 from typing import Dict, Optional
 
+
+def _getenv(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
+
+
+def _getenv_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _getenv_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _getenv_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 # ================= 配置区域 =================
-SOVITS_API_URL = "http://127.0.0.1:9880/tts"
+SOVITS_API_URL = _getenv("SOVITS_API_URL", "http://127.0.0.1:9880/tts")
 REFER_WAV_PATH = "ref_audio/罐头.wav"  # 建议换成帕朵的参考音频
 PROMPT_TEXT = "罐头，你怎么才回来……嗯？找到了个开店的好地方？在哪在哪？"  # 对应参考音频的文字
 AUX_PATH_1 = "ref_audio/罐头，你怎么才回来……嗯？找到了个开店的好地方？在哪在哪？.wav"
@@ -18,18 +44,26 @@ REF_MAP_CACHE_TIME: float = 0
 # 缓存过期时间（秒）
 REF_MAP_TTL = 300
 
-API_KEY = "sk-156ebc486b924ebc8b94656f4a3cfa86"
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-MODEL_NAME = "qwen-plus"
-HISTORY_FILE_PATH = "MSG/group_712851492_20260203_231902.json"
+API_KEY = _getenv("DASHSCOPE_API_KEY")
+QWEN_VL_API_KEY = _getenv("QWEN_VL_API_KEY")
+BASE_URL = _getenv("BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+MODEL_NAME = _getenv("MODEL_NAME", "qwen-plus")
+QWEN_VL_MODEL = "qwen-vl-plus"
+HISTORY_FILE_PATH = _getenv("HISTORY_FILE_PATH", "MSG/group_712851492_20260203_231902.json")
 
-ADMIN_UID = "3461737415"  # 你的纯数字 UID
-TARGET_UID = "u_MkWCKLdJG7Jubt9cQXbSpg"  # 语料学习目标 UID
+ADMIN_UID = _getenv("ADMIN_UID", "3461737415")  # 你的纯数字 UID
+TARGET_UID = _getenv("TARGET_UID", "u_MkWCKLdJG7Jubt9cQXbSpg")  # 语料学习目标 UID
+STARTUP_GROUP_ID = _getenv_int("STARTUP_GROUP_ID", 712851492)
 ACTIVATE_COMMAND = "#Neko"  # 激活指令
-WHITE_LIST_FILE = "active_groups.json"
+WHITE_LIST_FILE = _getenv("WHITE_LIST_FILE", "active_groups.json")
 
 TEXT_PROBABILITY = 0.9
 VOICE_PROBABILITY = 0.5
 GLOBAL_CD = 30  # 全局冷却时间，单位秒
 VOICE_KEYWORDS = ["语音", "声音", "唱歌", "听听", "想你了帕朵"]
 TXT_KEYWORDS = ["帕朵"]
+
+PROACTIVE_CHAT_ENABLED = _getenv_bool("PROACTIVE_CHAT_ENABLED", False)
+PROACTIVE_SILENCE_MINUTES = _getenv_int("PROACTIVE_SILENCE_MINUTES", 10)
+PROACTIVE_CHECK_INTERVAL_MINUTES = _getenv_int("PROACTIVE_CHECK_INTERVAL_MINUTES", 1)
+PROACTIVE_TEXT_PROBABILITY = _getenv_float("PROACTIVE_TEXT_PROBABILITY", 1.0)
