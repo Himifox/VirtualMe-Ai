@@ -1,6 +1,6 @@
 <div align="center">
 
-# VirtualMe-Ai
+# NekoPardo
 
 一个基于 NoneBot + OneBot V11 的 QQ 角色陪伴机器人。
 
@@ -17,7 +17,7 @@
 
 ## 项目定位
 
-VirtualMe-Ai 不是通用问答 bot，而是一个“带角色人格、记忆和成本控制”的陪伴型聊天机器人。当前主链路以 QQ 群聊为中心：
+NekoPardo 不是通用问答 bot，而是一个“带角色人格、记忆和成本控制”的陪伴型聊天机器人。当前主链路以 QQ 群聊为中心：
 
 ```text
 OneBot V11 事件

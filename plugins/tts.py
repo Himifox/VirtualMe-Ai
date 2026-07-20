@@ -321,7 +321,7 @@ async def get_doubao_audio(text: str) -> Optional[str]:
 
     url = f"{DOUBAO_TTS_BASE_URL.rstrip('/')}/api/v3/tts/unidirectional"
     payload = {
-        "user": {"uid": "virtualme-ai"},
+        "user": {"uid": "nekopardo"},
         "req_params": {
             "text": text,
             "speaker": DOUBAO_TTS_VOICE,
