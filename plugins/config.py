@@ -49,6 +49,10 @@ QWEN_VL_API_KEY = _getenv("QWEN_VL_API_KEY")
 BASE_URL = _getenv("BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 MODEL_NAME = _getenv("MODEL_NAME", "qwen-plus")
 QWEN_VL_MODEL = "qwen-vl-plus"
+STICKER_COLLECTION_ENABLED = _getenv_bool("STICKER_COLLECTION_ENABLED", True)
+STICKER_COLLECTION_ACTIVE_GROUPS_ONLY = _getenv_bool("STICKER_COLLECTION_ACTIVE_GROUPS_ONLY", True)
+STICKER_RECOGNIZE_EXISTING = _getenv_bool("STICKER_RECOGNIZE_EXISTING", False)
+STICKER_SEND_LOCAL_FIRST = _getenv_bool("STICKER_SEND_LOCAL_FIRST", True)
 
 TTS_PROVIDER = _getenv("TTS_PROVIDER", "auto").strip().lower()
 TTS_FALLBACK_PROVIDER = _getenv("TTS_FALLBACK_PROVIDER", "gsv").strip().lower()

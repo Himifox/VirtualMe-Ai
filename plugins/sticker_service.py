@@ -7,7 +7,15 @@ import aiohttp
 import aiofiles
 from nonebot import on_message, on_command, logger
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment, Message, GroupMessageEvent, PrivateMessageEvent
-from plugins.config import QWEN_VL_API_KEY, QWEN_VL_MODEL
+from plugins.config import (
+    QWEN_VL_API_KEY,
+    QWEN_VL_MODEL,
+    STICKER_COLLECTION_ACTIVE_GROUPS_ONLY,
+    STICKER_COLLECTION_ENABLED,
+    STICKER_RECOGNIZE_EXISTING,
+    STICKER_SEND_LOCAL_FIRST,
+    WHITE_LIST_FILE,
+)
 
 #==============================
 # 配置项
@@ -32,6 +40,27 @@ async def save_collection(collection):
     async with aiofiles.open(COLLECTION_JSON, "w", encoding="utf-8") as f:
         await f.write(json.dumps(collection, ensure_ascii=False, indent=2))
 
+
+def load_active_groups() -> set[int]:
+    if not os.path.exists(WHITE_LIST_FILE):
+        return set()
+    try:
+        with open(WHITE_LIST_FILE, "r", encoding="utf-8") as f:
+            return {int(group_id) for group_id in json.load(f)}
+    except Exception:
+        logger.exception("Failed to load active groups for sticker collection")
+        return set()
+
+
+def should_collect_from_event(event: Event) -> bool:
+    if not STICKER_COLLECTION_ENABLED:
+        return False
+    if not STICKER_COLLECTION_ACTIVE_GROUPS_ONLY:
+        return True
+    if not isinstance(event, GroupMessageEvent):
+        return False
+    return int(event.group_id) in load_active_groups()
+
 # ======================================
 # 工具：转换MD5值
 # ======================================
@@ -42,6 +71,31 @@ async def md5_url(url):
             md5_obj = hashlib.md5(content)
             return md5_obj.hexdigest()
 
+
+def local_sticker_path(img_md5: str) -> str:
+    return os.path.join(COLLECTION_DIR, f"{img_md5}.png")
+
+
+async def download_sticker_image(img_url: str, img_md5: str) -> None:
+    if not img_url or not img_md5:
+        return
+    os.makedirs(COLLECTION_DIR, exist_ok=True)
+    local_img_path = local_sticker_path(img_md5)
+    if os.path.exists(local_img_path):
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(img_url) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Failed to download sticker image {img_md5}: HTTP {resp.status}")
+                    return
+                img_data = await resp.read()
+        async with aiofiles.open(local_img_path, "wb") as f:
+            await f.write(img_data)
+        logger.info(f"Sticker image saved locally: {local_img_path}")
+    except Exception:
+        logger.exception(f"Failed to download sticker image: {img_md5}")
+
 # ==========================================================
 # 模块一：【被动技能】全自动表情包学习机 (监听群聊图片)
 # ==========================================================
@@ -49,6 +103,9 @@ sticker_listen = on_message(priority=99, block=False)
 
 @sticker_listen.handle()
 async def _(bot: Bot, event: Event):
+    if not should_collect_from_event(event):
+        return
+
     # 只过滤图片消息，避免满屏幕的 DEBUG text 刷屏
     for seg in event.get_message():
         if seg.type == "image":
@@ -59,7 +116,7 @@ async def _(bot: Bot, event: Event):
                 continue
                 
             if not img_md5:
-                print("DEBUG: 正在计算图片 MD5...")
+                logger.debug("Calculating sticker image MD5")
                 img_md5 = await md5_url(img_url)
 
             coll = await load_collection()
@@ -71,36 +128,24 @@ async def _(bot: Bot, event: Event):
                 old_meaning = old_data.get("meaning", old_data) if isinstance(old_data, dict) else old_data
                 coll[img_md5] = {"meaning": old_meaning, "url": img_url}
                 await save_collection(coll)
-                logger.info(f"✅ 更新已有表情包 URL: {img_md5}")
+                logger.info(f"Updated existing sticker URL: {img_md5}")
+                await download_sticker_image(img_url, img_md5)
+                if not STICKER_RECOGNIZE_EXISTING:
+                    continue
             
 
             # 全自动模式：立即识别并保存
-            print("DEBUG: 检测到新表情，开始 AI 识别...")
+            logger.info(f"New sticker detected, recognizing with Qwen-VL: {img_md5}")
             meaning = await qwen_recognize_sticker(img_url)
             if meaning:
                 coll[img_md5] = {"meaning": meaning, "url": img_url}
                 await save_collection(coll)
-                logger.info(f"🎉 AI识别成功：{meaning} (已自动收藏)")
+                logger.info(f"Sticker recognized and saved: {meaning}")
             
             else:
-                print("DEBUG: AI 识别返回为空")
+                logger.info(f"Sticker recognition returned empty result: {img_md5}")
 
-            # 确保文件夹存在
-            os.makedirs("sticker_collection", exist_ok=True)
-            local_img_path = f"sticker_collection/{img_md5}.png"
-
-            # 如果本地还没有这张图，就把它下载下来！
-            if not os.path.exists(local_img_path) and img_url:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(img_url) as resp:
-                            if resp.status == 200:
-                                img_data = await resp.read()
-                                async with aiofiles.open(local_img_path, "wb") as f:
-                                    await f.write(img_data)
-                                print(f"✅ 图片已成功下载到本地: {local_img_path}")
-                except Exception as e:
-                    print(f"❌ 下载图片失败: {e}")
+            await download_sticker_image(img_url, img_md5)
 
 async def qwen_recognize_sticker(img_url: str) -> str | None:
     if not QWEN_VL_API_KEY:
@@ -168,7 +213,11 @@ async def smart_send(bot: Bot, event: Event, ai_text: str, prob: float) -> bool:
     if result:
         target_md5, target_url = result
         if random.random() < prob:
-            logger.info(f"🎯 触发表情包！[MD5: {target_md5}]")
-            await bot.send(event, MessageSegment.image(file=target_url))
+            logger.info(f"Sticker matched for reply: {target_md5}")
+            image_file = target_url
+            local_img_path = os.path.abspath(local_sticker_path(target_md5))
+            if STICKER_SEND_LOCAL_FIRST and os.path.exists(local_img_path):
+                image_file = "file:///" + local_img_path.replace("\\", "/")
+            await bot.send(event, MessageSegment.image(file=image_file))
             return True 
     return False

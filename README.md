@@ -136,6 +136,15 @@ python bot.py
 | `MODEL_NAME` | 主聊天模型名 |
 | `QWEN_VL_API_KEY` | 表情/图片识别模型 API Key |
 
+### 表情包
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `STICKER_COLLECTION_ENABLED` | `true` | 是否自动收藏群聊图片/表情包 |
+| `STICKER_COLLECTION_ACTIVE_GROUPS_ONLY` | `true` | 只在已启用机器人群里收藏，避免误收私聊或无关群 |
+| `STICKER_RECOGNIZE_EXISTING` | `false` | 已收藏表情是否重新调用 Qwen-VL 识别 |
+| `STICKER_SEND_LOCAL_FIRST` | `true` | 发送表情时优先使用本地缓存图片 |
+
 ### TTS
 
 | 变量 | 说明 |
